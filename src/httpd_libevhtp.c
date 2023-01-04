@@ -257,6 +257,7 @@ httpd_backend_peer_get(const char **addr, uint16_t *port, httpd_backend *backend
 {
   httpd_connection *conn;
   union net_sockaddr naddr;
+  socklen_t sa_len = sizeof(naddr);
 
   *addr = NULL;
   *port = 0;
@@ -265,7 +266,8 @@ httpd_backend_peer_get(const char **addr, uint16_t *port, httpd_backend *backend
   if (!conn)
     return -1;
 
-  naddr.sa = *conn->saddr;
+  // We cannot use conn->saddr as we don't have the size, so it won't work for ipv6
+  getpeername(conn->sock, &naddr.sa, &sa_len);
 
   net_address_get(backend_data->peer_address, sizeof(backend_data->peer_address), &naddr);
   net_port_get(&backend_data->peer_port, &naddr);
