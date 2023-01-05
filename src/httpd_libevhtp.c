@@ -190,9 +190,10 @@ httpd_backend_data_free(httpd_backend_data *backend_data)
 void
 httpd_backend_reply_send(httpd_backend *backend, int code, const char *reason, struct evbuffer *evbuf)
 {
-  evhtp_send_reply_start(backend, code);
-  evhtp_send_reply_body(backend, evbuf);
-  evhtp_send_reply_end(backend);
+  if (evbuf)
+    evbuffer_add_buffer(backend->buffer_out, evbuf);
+
+  evhtp_send_reply(backend, code);
 }
 
 void
@@ -204,6 +205,7 @@ httpd_backend_reply_start_send(httpd_backend *backend, int code, const char *rea
 void
 httpd_backend_reply_chunk_send(httpd_backend *backend, struct evbuffer *evbuf, httpd_connection_chunkcb cb, void *arg)
 {
+  // TODO
 }
 
 void
@@ -369,6 +371,7 @@ httpd_uri_parsed_create(httpd_backend *backend)
 httpd_uri_parsed *
 httpd_uri_parsed_create_fromuri(const char *uri)
 {
+// TODO
   return NULL;
 }
 
@@ -377,6 +380,7 @@ httpd_uri_parsed_free(httpd_uri_parsed *parsed)
 {
   if (!parsed)
     return;
+// TODO
 //  if (parsed->ev_uri_is_standalone)
 //    free ev_uri;
 
