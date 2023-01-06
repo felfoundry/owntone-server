@@ -307,6 +307,42 @@ httpd_backend_preprocess(httpd_backend *backend)
   // nothing to do here
 }
 
+static int
+query_decode(evhtp_kvs_t **query)
+{
+  evhtp_kvs_t *query_decoded;
+  evhtp_kv_t *encoded;
+  evhtp_kv_t *decoded;
+  char buf[2048];
+  unsigned char *out;
+  size_t val_size;
+
+  query_decoded = evhtp_kvs_new();
+  if (!query_decoded)
+    return -1;
+
+  TAILQ_FOREACH(encoded, *query, next)
+    {
+      // Must include zero terminator in length or output won't be terminated
+      // (not very clear from evhtp docs)
+      val_size = strlen(encoded->val) + 1;
+      if (val_size > sizeof(buf))
+	continue;
+
+      // Isn't done by evhtp_unescape_string :-(
+      safe_snreplace(encoded->val, val_size, "+", " ");
+
+      out = (unsigned char *)buf;
+      evhtp_unescape_string(&out, (unsigned char *)encoded->val, val_size);
+      decoded = evhtp_kv_new(encoded->key, buf, 1, 1); // 1, 1 = Copy key/val
+      evhtp_kvs_add_kv(query_decoded, decoded);
+    }
+
+  evhtp_kvs_free(*query);
+  *query = query_decoded;
+  return 0;
+}
+
 httpd_uri_parsed *
 httpd_uri_parsed_create(httpd_backend *backend)
 {
@@ -358,6 +394,10 @@ httpd_uri_parsed_create(httpd_backend *backend)
   // If "path_part" is not NULL, we have path tokens that could not be parsed into the "parsed->path_parts" array
   if (path_part)
     goto error;
+
+  // uri->query isn't uri decoded, so we replace it with one that is
+  if (backend->uri->query)
+    query_decode(&backend->uri->query);
 
   free(path);
   return parsed;
