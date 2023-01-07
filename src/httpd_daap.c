@@ -55,9 +55,6 @@
 #include "cache.h"
 
 
-/* httpd event base, from httpd.c */
-extern struct event_base *evbase_httpd;
-
 /* Max number of sessions and session timeout
  * Many clients (including iTunes) don't seem to respect the timeout capability
  * that we announce, and just keep using the same session. Therefore we take a
@@ -985,6 +982,7 @@ static enum daap_reply_result
 daap_reply_update(struct httpd_request *hreq)
 {
   struct daap_update_request *ur;
+  struct event_base *evbase;
   const char *param;
   int reqd_rev;
   int ret;
@@ -1037,7 +1035,9 @@ daap_reply_update(struct httpd_request *hreq)
 
   if (DAAP_UPDATE_REFRESH > 0)
     {
-      ur->timeout = evtimer_new(evbase_httpd, update_refresh_cb, ur);
+      evbase = httpd_request_evbase_get(hreq);
+
+      ur->timeout = evtimer_new(evbase, update_refresh_cb, ur);
       if (ur->timeout)
 	ret = evtimer_add(ur->timeout, &daap_update_refresh_tv);
       else
@@ -2346,11 +2346,10 @@ daap_reply_build(const char *uri, const char *user_agent, int is_remote)
 }
 
 static int
-daap_init(void)
+daap_init(struct event_base *evbase)
 {
   srand((unsigned)time(NULL));
   current_rev = 2;
-  update_requests = NULL;
 
   return 0;
 }

@@ -128,6 +128,16 @@ httpd_request_closecb_set(struct httpd_request *hreq, httpd_connection_closecb c
   return evhtp_connection_set_hook(conn, evhtp_hook_on_connection_fini, closecb_wrapper, hreq->backend_data);
 }
 
+struct event_base *
+httpd_request_evbase_get(struct httpd_request *hreq)
+{
+  httpd_connection *conn = httpd_request_connection_get(hreq);
+  if (conn)
+    return NULL;
+
+  return conn->evbase;
+}
+
 void
 httpd_server_free(httpd_server *server)
 {

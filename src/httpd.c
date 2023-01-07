@@ -126,7 +126,7 @@ static const struct content_type_map ext2ctype[] =
   };
 
 static char webroot_directory[PATH_MAX];
-struct event_base *evbase_httpd;
+static struct event_base *evbase_httpd;
 
 #ifdef HAVE_EVENTFD
 static int exit_efd;
@@ -218,7 +218,7 @@ modules_handlers_set(struct httpd_uri_map *uri_map)
 }
 
 static int
-modules_init(void)
+modules_init(struct event_base *evbase)
 {
   struct httpd_module **ptr;
   struct httpd_module *m;
@@ -226,7 +226,7 @@ modules_init(void)
   for (ptr = httpd_modules; *ptr; ptr++)
     {
       m = *ptr;
-      m->initialized = (!m->init || m->init() == 0);
+      m->initialized = (!m->init || m->init(evbase) == 0);
       if (!m->initialized)
 	{
 	  DPRINTF(E_FATAL, L_HTTPD, "%s init failed\n", m->name);
@@ -1517,13 +1517,6 @@ httpd_init(const char *webroot)
       return -1;
     }
 
-  evbase_httpd = event_base_new();
-  if (!evbase_httpd)
-    {
-      DPRINTF(E_FATAL, L_HTTPD, "Could not create an event base\n");
-      return -1;
-    }
-
 #ifdef HAVE_LIBWEBSOCKETS
   ret = websocket_init();
   if (ret < 0)
@@ -1533,7 +1526,9 @@ httpd_init(const char *webroot)
     }
 #endif
 
-  ret = modules_init();
+  CHECK_NULL(L_HTTPD, evbase_httpd = event_base_new());
+
+  ret = modules_init(evbase_httpd);
   if (ret < 0)
     {
       DPRINTF(E_FATAL, L_HTTPD, "Modules init failed\n");

@@ -41,9 +41,6 @@
 #include "listener.h"
 #include "db.h"
 
-/* httpd event base, from httpd.c */
-extern struct event_base *evbase_httpd;
-
 // Seconds between sending silence when player is idle
 // (to prevent client from hanging up)
 #define STREAMING_SILENCE_INTERVAL 1
@@ -627,7 +624,7 @@ streaming_request(struct httpd_request *hreq)
 }
 
 static int
-streaming_init(void)
+streaming_init(struct event_base *evbase)
 {
   int ret;
   cfg_t *cfgsec;
@@ -717,8 +714,8 @@ streaming_init(void)
   // Initialize buffer for encoded mp3 audio and event for pipe reading
   CHECK_NULL(L_STREAMING, streaming_encoded_data = evbuffer_new());
 
-  CHECK_NULL(L_STREAMING, streamingev = event_new(evbase_httpd, streaming_pipe[0], EV_TIMEOUT | EV_READ | EV_PERSIST, streaming_send_cb, NULL));
-  CHECK_NULL(L_STREAMING, metaev = event_new(evbase_httpd, streaming_meta[0], EV_READ | EV_PERSIST, streaming_meta_cb, NULL));
+  CHECK_NULL(L_STREAMING, streamingev = event_new(evbase, streaming_pipe[0], EV_TIMEOUT | EV_READ | EV_PERSIST, streaming_send_cb, NULL));
+  CHECK_NULL(L_STREAMING, metaev = event_new(evbase, streaming_meta[0], EV_READ | EV_PERSIST, streaming_meta_cb, NULL));
 
   streaming_icy_clients = 0;
 

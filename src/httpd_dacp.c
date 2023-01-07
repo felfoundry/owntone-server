@@ -49,9 +49,6 @@
 
 #define DACP_VOLUME_STEP 5
 
-/* httpd event base, from httpd.c */
-extern struct event_base *evbase_httpd;
-
 struct dacp_update_request {
   struct httpd_request *hreq;
 
@@ -2875,7 +2872,7 @@ static void
 dacp_deinit(void);
 
 static int
-dacp_init(void)
+dacp_init(struct event_base *evbase)
 {
   current_rev = 2;
 
@@ -2899,7 +2896,7 @@ dacp_init(void)
       goto error;
     }
 
-  CHECK_NULL(L_DACP, updateev = event_new(evbase_httpd, update_efd, EV_READ, playstatusupdate_cb, NULL));
+  CHECK_NULL(L_DACP, updateev = event_new(evbase, update_efd, EV_READ, playstatusupdate_cb, NULL));
 #else
 # ifdef HAVE_PIPE2
   int ret = pipe2(update_pipe, O_CLOEXEC);
@@ -2912,12 +2909,12 @@ dacp_init(void)
       goto error;
     }
 
-  CHECK_NULL(L_DACP, updateev = event_new(evbase_httpd, update_pipe[0], EV_READ, playstatusupdate_cb, NULL));
+  CHECK_NULL(L_DACP, updateev = event_new(evbase, update_pipe[0], EV_READ, playstatusupdate_cb, NULL));
 #endif /* HAVE_EVENTFD */
 
   event_add(updateev, NULL);
 
-  CHECK_NULL(L_DACP, seek_timer = evtimer_new(evbase_httpd, seek_timer_cb, NULL));
+  CHECK_NULL(L_DACP, seek_timer = evtimer_new(evbase, seek_timer_cb, NULL));
 
   listener_add(dacp_playstatus_update_handler, LISTENER_PLAYER | LISTENER_VOLUME | LISTENER_QUEUE);
 

@@ -10,6 +10,32 @@
 # include <config.h>
 #endif
 
+/* Response codes from event2/http.h */
+#define HTTP_CONTINUE          100	/**< client should proceed to send */
+#define HTTP_SWITCH_PROTOCOLS  101	/**< switching to another protocol */
+#define HTTP_PROCESSING        102	/**< processing the request, but no response is available yet */
+#define HTTP_EARLYHINTS        103	/**< return some response headers */
+#define HTTP_OK                200	/**< request completed ok */
+#define HTTP_CREATED           201	/**< new resource is created */
+#define HTTP_ACCEPTED          202	/**< accepted for processing */
+#define HTTP_NONAUTHORITATIVE  203	/**< returning a modified version of the origin's response */
+#define HTTP_NOCONTENT         204	/**< request does not have content */
+#define HTTP_MOVEPERM          301	/**< the uri moved permanently */
+#define HTTP_MOVETEMP          302	/**< the uri moved temporarily */
+#define HTTP_NOTMODIFIED       304	/**< page was not modified from last */
+#define HTTP_BADREQUEST        400	/**< invalid http request was made */
+#define HTTP_UNAUTHORIZED      401	/**< authentication is required */
+#define HTTP_PAYMENTREQUIRED   402	/**< user exceeded limit on requests */
+#define HTTP_FORBIDDEN         403	/**< user not having the necessary permissions */
+#define HTTP_NOTFOUND          404	/**< could not find content for uri */
+#define HTTP_BADMETHOD         405 	/**< method not allowed for this uri */
+#define HTTP_ENTITYTOOLARGE    413	/**< request is larger than the server is able to process */
+#define HTTP_EXPECTATIONFAILED 417	/**< we can't handle this expectation */
+#define HTTP_INTERNAL          500     /**< internal error */
+#define HTTP_NOTIMPLEMENTED    501     /**< not implemented */
+#define HTTP_BADGATEWAY        502	/**< received an invalid response from the upstream */
+#define HTTP_SERVUNAVAIL       503	/**< the server is not available */
+
 struct httpd_request;
 
 #ifdef HAVE_LIBEVHTP
@@ -27,32 +53,6 @@ typedef struct evhtp_kvs_s httpd_headers;
 typedef struct evhtp_kvs_s httpd_query;
 typedef struct httpd_uri_parsed httpd_uri_parsed;
 typedef struct httpd_backend_data httpd_backend_data;
-
-/* Response codes from event2/http.h */
-#define HTTP_CONTINUE		100	/**< client should proceed to send */
-#define HTTP_SWITCH_PROTOCOLS	101	/**< switching to another protocol */
-#define HTTP_PROCESSING		102	/**< processing the request, but no response is available yet */
-#define HTTP_EARLYHINTS		103	/**< return some response headers */
-#define HTTP_OK			200	/**< request completed ok */
-#define HTTP_CREATED		201	/**< new resource is created */
-#define HTTP_ACCEPTED		202	/**< accepted for processing */
-#define HTTP_NONAUTHORITATIVE	203	/**< returning a modified version of the origin's response */
-#define HTTP_NOCONTENT		204	/**< request does not have content */
-#define HTTP_MOVEPERM		301	/**< the uri moved permanently */
-#define HTTP_MOVETEMP		302	/**< the uri moved temporarily */
-#define HTTP_NOTMODIFIED	304	/**< page was not modified from last */
-#define HTTP_BADREQUEST		400	/**< invalid http request was made */
-#define HTTP_UNAUTHORIZED	401	/**< authentication is required */
-#define HTTP_PAYMENTREQUIRED	402	/**< user exceeded limit on requests */
-#define HTTP_FORBIDDEN		403	/**< user not having the necessary permissions */
-#define HTTP_NOTFOUND		404	/**< could not find content for uri */
-#define HTTP_BADMETHOD		405 	/**< method not allowed for this uri */
-#define HTTP_ENTITYTOOLARGE	413	/**< request is larger than the server is able to process */
-#define HTTP_EXPECTATIONFAILED	417	/**< we can't handle this expectation */
-#define HTTP_INTERNAL           500     /**< internal error */
-#define HTTP_NOTIMPLEMENTED     501     /**< not implemented */
-#define HTTP_BADGATEWAY		502	/**< received an invalid response from the upstream */
-#define HTTP_SERVUNAVAIL	503	/**< the server is not available */
 
 #else
 struct evhttp;
@@ -122,9 +122,9 @@ struct httpd_module
   // Pointer to the module's handler definitions
   struct httpd_uri_map *handlers;
 
-  int (*init)(void);
+  int (*init)(struct event_base *);
   void (*deinit)(void);
-  void (*request)(struct httpd_request *hreq);
+  void (*request)(struct httpd_request *);
 };
 
 /*
@@ -300,6 +300,9 @@ httpd_request_backend_free(struct httpd_request *hreq);
 
 int
 httpd_request_closecb_set(struct httpd_request *hreq, httpd_connection_closecb cb, void *arg);
+
+struct event_base *
+httpd_request_evbase_get(struct httpd_request *hreq);
 
 void
 httpd_server_free(httpd_server *server);

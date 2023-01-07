@@ -97,6 +97,16 @@ httpd_request_closecb_set(struct httpd_request *hreq, httpd_connection_closecb c
   return 0;
 }
 
+struct event_base *
+httpd_request_evbase_get(struct httpd_request *hreq)
+{
+  httpd_connection *conn = httpd_request_connection_get(hreq);
+  if (conn)
+    return NULL;
+
+  return evhttp_connection_get_base(conn);
+}
+
 void
 httpd_server_free(httpd_server *server)
 {
