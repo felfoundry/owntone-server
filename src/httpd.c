@@ -1495,9 +1495,8 @@ int
 httpd_init(const char *webroot)
 {
   struct stat sb;
+  int exit_fd;
   int ret;
-
-  httpd_exit = 0;
 
   DPRINTF(E_DBG, L_HTTPD, "Starting web server with root directory '%s'\n", webroot);
   ret = stat(webroot, &sb);
@@ -1517,6 +1516,44 @@ httpd_init(const char *webroot)
       return -1;
     }
 
+  CHECK_NULL(L_HTTPD, evbase_httpd = event_base_new());
+
+#ifdef HAVE_EVENTFD
+  CHECK_ERRNO(L_HTTPD, exit_efd = eventfd(0, EFD_CLOEXEC));
+  exit_fd = exit_efd;
+#else
+# ifdef HAVE_PIPE2
+  CHECK_ERRNO(L_HTTPD, pipe2(exit_pipe, O_CLOEXEC));
+# else
+  CHECK_ERRNO(L_HTTPD, pipe(exit_pipe));
+# endif
+  exit_fd = exit_pipe[0];
+#endif /* HAVE_EVENTFD */
+  CHECK_NULL(L_HTTPD, exitev = event_new(evbase_httpd, exit_fd, EV_READ, exit_cb, NULL));
+  event_add(exitev, NULL);
+
+  httpd_port = cfg_getint(cfg_getsec(cfg, "library"), "port");
+  httpd_serv = httpd_server_new(evbase_httpd, httpd_port, httpd_gen_cb, NULL);
+  if (!httpd_serv)
+    {
+      DPRINTF(E_FATAL, L_HTTPD, "Could not create HTTP server on port %d (server already running?)\n", httpd_port);
+      goto server_fail;
+    }
+
+  // For CORS headers
+  httpd_allow_origin = cfg_getstr(cfg_getsec(cfg, "general"), "allow_origin");
+  if (strlen(httpd_allow_origin) == 0)
+    httpd_allow_origin = NULL;
+  httpd_server_allow_origin_set(httpd_serv, httpd_allow_origin);
+
+  // Prepare modules, e.g. httpd_daap
+  ret = modules_init(evbase_httpd);
+  if (ret < 0)
+    {
+      DPRINTF(E_FATAL, L_HTTPD, "Modules init failed\n");
+      goto modules_fail;
+    }
+
 #ifdef HAVE_LIBWEBSOCKETS
   ret = websocket_init();
   if (ret < 0)
@@ -1525,59 +1562,6 @@ httpd_init(const char *webroot)
       goto websocket_fail;
     }
 #endif
-
-  CHECK_NULL(L_HTTPD, evbase_httpd = event_base_new());
-
-  ret = modules_init(evbase_httpd);
-  if (ret < 0)
-    {
-      DPRINTF(E_FATAL, L_HTTPD, "Modules init failed\n");
-      goto modules_fail;
-    }
-
-#ifdef HAVE_EVENTFD
-  exit_efd = eventfd(0, EFD_CLOEXEC);
-  if (exit_efd < 0)
-    {
-      DPRINTF(E_FATAL, L_HTTPD, "Could not create eventfd: %s\n", strerror(errno));
-      goto pipe_fail;
-    }
-
-  exitev = event_new(evbase_httpd, exit_efd, EV_READ, exit_cb, NULL);
-#else
-# ifdef HAVE_PIPE2
-  ret = pipe2(exit_pipe, O_CLOEXEC);
-# else
-  ret = pipe(exit_pipe);
-# endif
-  if (ret < 0)
-    {
-      DPRINTF(E_FATAL, L_HTTPD, "Could not create pipe: %s\n", strerror(errno));
-      goto pipe_fail;
-    }
-
-  exitev = event_new(evbase_httpd, exit_pipe[0], EV_READ, exit_cb, NULL);
-#endif /* HAVE_EVENTFD */
-  if (!exitev)
-    {
-      DPRINTF(E_FATAL, L_HTTPD, "Could not create exit event\n");
-      goto exitev_fail;
-    }
-  event_add(exitev, NULL);
-
-  httpd_port = cfg_getint(cfg_getsec(cfg, "library"), "port");
-  httpd_serv = httpd_server_new(evbase_httpd, httpd_port, httpd_gen_cb, NULL);
-  if (!httpd_serv)
-    {
-      DPRINTF(E_FATAL, L_HTTPD, "Could not create HTTP server on port %d (server already running?)\n", httpd_port);
-      goto httpd_server_fail;
-    }
-
-  // For CORS headers
-  httpd_allow_origin = cfg_getstr(cfg_getsec(cfg, "general"), "allow_origin");
-  if (strlen(httpd_allow_origin) == 0)
-    httpd_allow_origin = NULL;
-  httpd_server_allow_origin_set(httpd_serv, httpd_allow_origin);
 
   ret = pthread_create(&tid_httpd, NULL, httpd, NULL);
   if (ret != 0)
@@ -1591,22 +1575,20 @@ httpd_init(const char *webroot)
   return 0;
 
  thread_fail:
+#ifdef HAVE_LIBWEBSOCKETS
+  websocket_deinit();
+ websocket_fail:
+#endif
+  modules_deinit();
+ modules_fail:
   httpd_server_free(httpd_serv);
- httpd_server_fail:
+ server_fail:
   event_free(exitev);
- exitev_fail:
 #ifdef HAVE_EVENTFD
   close(exit_efd);
 #else
   close(exit_pipe[0]);
   close(exit_pipe[1]);
-#endif
- pipe_fail:
- modules_fail:
-  modules_deinit();
-#ifdef HAVE_LIBWEBSOCKETS
-  websocket_deinit();
- websocket_fail:
 #endif
   event_base_free(evbase_httpd);
 
