@@ -5,6 +5,9 @@
 #include "misc.h"
 #include "httpd_internal.h"
 
+
+#include "logger.h"
+
 struct httpd_backend_data
 {
   char peer_address[32];
@@ -314,7 +317,7 @@ httpd_backend_method_get(enum httpd_methods *method, httpd_backend *backend)
 void
 httpd_backend_preprocess(httpd_backend *backend)
 {
-  // nothing to do here
+  // Nothing to do here
 }
 
 static int

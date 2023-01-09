@@ -150,8 +150,6 @@ artworkapi_request(struct httpd_request *hreq)
 {
   int status_code;
 
-  DPRINTF(E_DBG, L_WEB, "Artwork api request: '%s'\n", hreq->uri);
-
   if (!httpd_admin_check_auth(hreq))
     return;
 
@@ -192,6 +190,7 @@ struct httpd_module httpd_artworkapi =
 {
   .name = "Artwork API",
   .type = MODULE_ARTWORKAPI,
+  .logdomain = L_WEB,
   .subpaths = { "/artwork/", NULL },
   .handlers = artworkapi_handlers,
   .request = artworkapi_request,

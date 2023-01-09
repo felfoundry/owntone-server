@@ -756,6 +756,7 @@ struct httpd_module httpd_streaming =
 {
   .name = "Streaming",
   .type = MODULE_STREAMING,
+  .logdomain = L_STREAMING,
   .fullpaths = { "/stream.mp3", NULL },
   .handlers = streaming_handlers,
   .init = streaming_init,

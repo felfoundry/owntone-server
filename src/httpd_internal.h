@@ -36,6 +36,7 @@
 #define HTTP_BADGATEWAY        502	/**< received an invalid response from the upstream */
 #define HTTP_SERVUNAVAIL       503	/**< the server is not available */
 
+
 struct httpd_request;
 
 #ifdef HAVE_LIBEVHTP
@@ -114,6 +115,7 @@ struct httpd_module
   const char *name;
   enum httpd_modules type;
   char initialized;
+  int logdomain;
 
   // Null-terminated list of URL subpath that the module accepts e.g., /subpath/morepath/file.mp3
   const char *subpaths[16];

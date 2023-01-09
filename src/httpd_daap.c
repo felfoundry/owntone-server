@@ -2222,8 +2222,6 @@ daap_request(struct httpd_request *hreq)
   int ret;
   int msec;
 
-  DPRINTF(E_DBG, L_DAAP, "DAAP request: '%s'\n", hreq->uri);
-
   if (!hreq->handler)
     {
       DPRINTF(E_LOG, L_DAAP, "Unrecognized path in DAAP request: '%s'\n", hreq->uri);
@@ -2383,6 +2381,7 @@ struct httpd_module httpd_daap =
 {
   .name = "DAAP",
   .type = MODULE_DAAP,
+  .logdomain = L_DAAP,
   .subpaths = { "/databases/", NULL },
 #ifdef DMAP_TEST
   .fullpaths = { "/databases", "/server-info", "/content-codes", "/login", "/update", "/activity", "/logout", "/dmap-test", NULL },

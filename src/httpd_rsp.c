@@ -860,8 +860,6 @@ rsp_request(struct httpd_request *hreq)
 {
   int ret;
 
-  DPRINTF(E_DBG, L_RSP, "RSP request: '%s'\n", hreq->uri);
-
   if (!hreq->handler)
     {
       DPRINTF(E_LOG, L_RSP, "Unrecognized path in RSP request: '%s'\n", hreq->uri);
@@ -893,6 +891,7 @@ struct httpd_module httpd_rsp =
 {
   .name = "RSP",
   .type = MODULE_RSP,
+  .logdomain = L_RSP,
   .subpaths = { "/rsp/", NULL },
   .handlers = rsp_handlers,
   .init = rsp_init,

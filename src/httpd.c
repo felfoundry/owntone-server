@@ -36,6 +36,8 @@
 #include <stdint.h>
 #include <inttypes.h>
 
+#include <syscall.h> // get thread ID
+
 #ifdef HAVE_EVENTFD
 # include <sys/eventfd.h>
 #endif
@@ -855,46 +857,48 @@ handle_cors_preflight(struct httpd_request *hreq, const char *allow_origin)
 static void
 httpd_gen_cb(httpd_backend *backend, void *arg)
 {
-  struct httpd_request hreq;
+  struct httpd_request hreq_stack;
+  struct httpd_request *hreq = &hreq_stack; // Shorthand
 
   // This is to make modifications to e.g. evhttps's request object
   httpd_backend_preprocess(backend);
 
   // Populates the hreq struct
-  request_set(&hreq, backend, NULL, NULL);
+  request_set(hreq, backend, NULL, NULL);
 
   // Did we get a CORS preflight request?
-  if (handle_cors_preflight(&hreq, httpd_allow_origin) == 0)
+  if (handle_cors_preflight(hreq, httpd_allow_origin) == 0)
     {
       goto out;
     }
 
-  if (!(&hreq)->uri || !(&hreq)->uri_parsed)
+  if (!hreq->uri || !hreq->uri_parsed)
     {
-      DPRINTF(E_WARN, L_HTTPD, "Invalid URI in request: '%s'\n", (&hreq)->uri);
-      httpd_redirect_to(&hreq, "/");
+      DPRINTF(E_WARN, L_HTTPD, "Invalid URI in request: '%s'\n", hreq->uri);
+      httpd_redirect_to(hreq, "/");
       goto out;
     }
-  else if (!(&hreq)->path)
+  else if (!hreq->path)
     {
-      DPRINTF(E_WARN, L_HTTPD, "Invalid path in request: '%s'\n", (&hreq)->uri);
-      httpd_redirect_to(&hreq, "/");
+      DPRINTF(E_WARN, L_HTTPD, "Invalid path in request: '%s'\n", hreq->uri);
+      httpd_redirect_to(hreq, "/");
       goto out;
     }
 
-  if ((&hreq)->module)
+  if (hreq->module)
     {
-      (&hreq)->module->request(&hreq);
+      DPRINTF(E_DBG, hreq->module->logdomain, "%s request: '%s' (thread %ld)\n", hreq->module->name, hreq->uri, syscall(SYS_gettid));
+      hreq->module->request(hreq);
     }
   else
     {
       // Serve web interface files
-      DPRINTF(E_DBG, L_HTTPD, "HTTP request: '%s'\n", (&hreq)->uri);
-      serve_file(&hreq);
+      DPRINTF(E_DBG, L_HTTPD, "HTTP request: '%s'\n", hreq->uri);
+      serve_file(hreq);
     }
 
  out:
-  request_unset(&hreq);
+  request_unset(hreq);
 }
 
 

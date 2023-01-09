@@ -2850,8 +2850,6 @@ static struct httpd_uri_map dacp_handlers[] =
 static void
 dacp_request(struct httpd_request *hreq)
 {
-  DPRINTF(E_DBG, L_DACP, "DACP request: '%s'\n", hreq->uri);
-
   if (!hreq->handler)
     {
       DPRINTF(E_LOG, L_DACP, "Unrecognized path in DACP request: '%s'\n", hreq->uri);
@@ -2962,6 +2960,7 @@ struct httpd_module httpd_dacp =
 {
   .name = "DACP",
   .type = MODULE_DACP,
+  .logdomain = L_DACP,
   .subpaths = { "/ctrl-int/", NULL },
   .fullpaths = { "/ctrl-int", NULL },
   .handlers = dacp_handlers,

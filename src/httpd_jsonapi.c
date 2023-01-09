@@ -4706,8 +4706,6 @@ jsonapi_request(struct httpd_request *hreq)
 {
   int status_code;
 
-  DPRINTF(E_DBG, L_WEB, "JSON api request: '%s'\n", hreq->uri);
-
   if (!httpd_admin_check_auth(hreq))
     {
       return;
@@ -4797,6 +4795,7 @@ struct httpd_module httpd_jsonapi =
 {
   .name = "JSON API",
   .type = MODULE_JSONAPI,
+  .logdomain = L_WEB,
   .subpaths = { "/api/", NULL },
   .handlers = adm_handlers,
   .init = jsonapi_init,

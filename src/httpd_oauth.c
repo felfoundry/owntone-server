@@ -93,8 +93,6 @@ static struct httpd_uri_map oauth_handlers[] =
 static void
 oauth_request(struct httpd_request *hreq)
 {
-  DPRINTF(E_LOG, L_WEB, "OAuth request: '%s'\n", hreq->uri);
-
   if (!hreq->handler)
     {
       DPRINTF(E_LOG, L_WEB, "Unrecognized path in OAuth request: '%s'\n", hreq->uri);
@@ -110,6 +108,7 @@ struct httpd_module httpd_oauth =
 {
   .name = "OAuth",
   .type = MODULE_OAUTH,
+  .logdomain = L_WEB,
   .subpaths = { "/oauth/", NULL },
   .fullpaths = { "/oauth", NULL },
   .handlers = oauth_handlers,
