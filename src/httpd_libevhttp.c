@@ -4,9 +4,12 @@
 
 #include <event2/http.h>
 #include <event2/http_struct.h>
+#include <event2/http_compat.h>
 #include <event2/keyvalq_struct.h>
 
 #include "misc.h" // For net_evhttp_bind
+#include "worker.h"
+#include "logger.h"
 #include "httpd_internal.h"
 
 struct httpd_uri_parsed
@@ -15,6 +18,19 @@ struct httpd_uri_parsed
   struct evkeyvalq query;
   char *path;
   httpd_uri_path_parts path_parts;
+};
+
+struct httpd_server
+{
+  struct evhttp *evhttp;
+  httpd_general_cb request_cb;
+  void *request_cb_arg;
+};
+
+struct cmdargs
+{
+  httpd_server *server;
+  httpd_backend *backend;
 };
 
 
@@ -113,23 +129,50 @@ httpd_server_free(httpd_server *server)
   if (!server)
     return;
 
-  evhttp_free(server);
+  evhttp_free(server->evhttp);
+  free(server);
+}
+
+// Executed in a worker thread
+static void
+gencb_worker_cb(void *arg)
+{
+  struct cmdargs *cmd = arg;
+  httpd_server *server = cmd->server;
+  httpd_backend *backend = cmd->backend;
+
+  server->request_cb(backend, server->request_cb_arg);
+}
+
+// Callback from evhttp in httpd thread
+static void
+gencb_httpd(httpd_backend *backend, void *server)
+{
+  struct cmdargs cmd;
+
+  cmd.server = server;
+  cmd.backend = backend;
+  // Defer the execution to a worker thread
+  worker_execute(gencb_worker_cb, &cmd, sizeof(cmd), 0);
 }
 
 httpd_server *
 httpd_server_new(struct event_base *evbase, unsigned short port, httpd_general_cb cb, void *arg)
 {
+  httpd_server *server;
   int ret;
-  struct evhttp *server = evhttp_new(evbase);
 
-  if (!server)
-    goto error;
+  CHECK_NULL(L_HTTPD, server = calloc(1, sizeof(httpd_server)));
+  CHECK_NULL(L_HTTPD, server->evhttp = evhttp_new(evbase));
 
-  ret = net_evhttp_bind(server, port, "httpd");
+  server->request_cb = cb;
+  server->request_cb_arg = arg;
+
+  ret = net_evhttp_bind(server->evhttp, port, "httpd");
   if (ret < 0)
     goto error;
 
-  evhttp_set_gencb(server, cb, arg);
+  evhttp_set_gencb(server->evhttp, gencb_httpd, server);
 
   return server;
 
@@ -141,7 +184,7 @@ httpd_server_new(struct event_base *evbase, unsigned short port, httpd_general_c
 void
 httpd_server_allow_origin_set(httpd_server *server, bool allow)
 {
-  evhttp_set_allowed_methods(server, EVHTTP_REQ_GET | EVHTTP_REQ_POST | EVHTTP_REQ_PUT | EVHTTP_REQ_DELETE | EVHTTP_REQ_HEAD | EVHTTP_REQ_OPTIONS);
+  evhttp_set_allowed_methods(server->evhttp, EVHTTP_REQ_GET | EVHTTP_REQ_POST | EVHTTP_REQ_PUT | EVHTTP_REQ_DELETE | EVHTTP_REQ_HEAD | EVHTTP_REQ_OPTIONS);
 }
 
 void

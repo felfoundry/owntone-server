@@ -41,13 +41,13 @@ struct httpd_request;
 
 // Declaring here instead of including event2/http.h makes it easier to support
 // other backends than evhttp in the future, e.g. libevhtp
-struct evhttp;
+struct httpd_server;
 struct evhttp_connection;
 struct evhttp_request;
 struct evkeyvalq;
 struct httpd_uri_parsed;
 
-typedef struct evhttp httpd_server;
+typedef struct httpd_server httpd_server;
 typedef struct evhttp_connection httpd_connection;
 typedef struct evhttp_request httpd_backend;
 typedef struct evkeyvalq httpd_headers;

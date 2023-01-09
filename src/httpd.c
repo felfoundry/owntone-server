@@ -855,7 +855,7 @@ handle_cors_preflight(struct httpd_request *hreq, const char *allow_origin)
 }
 
 static void
-httpd_gen_cb(httpd_backend *backend, void *arg)
+request_cb(httpd_backend *backend, void *arg)
 {
   struct httpd_request hreq_stack;
   struct httpd_request *hreq = &hreq_stack; // Shorthand
@@ -1537,7 +1537,7 @@ httpd_init(const char *webroot)
   event_add(exitev, NULL);
 
   httpd_port = cfg_getint(cfg_getsec(cfg, "library"), "port");
-  httpd_serv = httpd_server_new(evbase_httpd, httpd_port, httpd_gen_cb, NULL);
+  httpd_serv = httpd_server_new(evbase_httpd, httpd_port, request_cb, NULL);
   if (!httpd_serv)
     {
       DPRINTF(E_FATAL, L_HTTPD, "Could not create HTTP server on port %d (server already running?)\n", httpd_port);
