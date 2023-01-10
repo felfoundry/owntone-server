@@ -94,6 +94,7 @@ owntone_SOURCES = main.c \
 	remote_pairing.c remote_pairing.h \
 	httpd_libevhttp.c \
 	httpd.c httpd.h httpd_internal.h \
+	worker_evthr.c worker_evthr.h \
 	httpd_rsp.c \
 	httpd_daap.c httpd_daap.h \
 	httpd_dacp.c \
