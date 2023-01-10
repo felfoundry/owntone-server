@@ -1484,16 +1484,6 @@ httpd_basic_auth(struct httpd_request *hreq, const char *user, const char *passw
   return -1;
 }
 
-void
-httpd_peer_get(const char **address, ev_uint16_t *port, struct evhttp_connection *evcon)
-{
-#ifdef HAVE_EVHTTP_CONNECTION_GET_PEER_CONST_CHAR
-  evhttp_connection_get_peer(evcon, address, port);
-#else
-  evhttp_connection_get_peer(evcon, (char **)address, port);
-#endif
-}
-
 /* Thread: main */
 int
 httpd_init(const char *webroot)
