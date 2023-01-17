@@ -22,6 +22,7 @@
 
 #include <stdlib.h>
 #include <string.h>
+#include <unistd.h>
 #include <sys/queue.h>
 
 #include <event2/http.h>
@@ -31,7 +32,6 @@
 #include <event2/buffer.h>
 
 #include "misc.h" // For net_evhttp_bind
-#include "worker.h"
 #include "logger.h"
 #include "httpd_internal.h"
 
@@ -46,6 +46,7 @@ struct httpd_uri_parsed
 
 struct httpd_server
 {
+  int fd;
   struct evhttp *evhttp;
   httpd_request_cb request_cb;
   void *request_cb_arg;
@@ -54,7 +55,7 @@ struct httpd_server
 struct cmdargs
 {
   httpd_server *server;
-  httpd_backend *backend;
+  struct httpd_request *hreq;
 };
 
 
@@ -147,9 +148,15 @@ httpd_request_evbase_get(struct httpd_request *hreq)
   return evhttp_connection_get_base(conn);
 }
 
+int alloc_count;
+
 void
 httpd_request_free(struct httpd_request *hreq)
 {
+  alloc_count--;
+  DPRINTF(E_LOG, L_HTTPD, "DEALLOC - COUNT %d\n", alloc_count);
+  return;
+
   if (!hreq)
     return;
 
@@ -168,6 +175,9 @@ httpd_request_new(httpd_backend *backend, const char *uri, const char *user_agen
   httpd_backend_data *backend_data;
 
   CHECK_NULL(L_HTTPD, hreq = calloc(1, sizeof(struct httpd_request)));
+
+  alloc_count++;
+  DPRINTF(E_LOG, L_HTTPD, "ALLOC - COUNT %d\n", alloc_count);
 
   // Populate hreq by getting values from the backend (or from the caller)
   hreq->backend = backend;
@@ -224,42 +234,27 @@ request_free_cb(httpd_backend *backend, void *arg)
   httpd_request_free(hreq);
 }
 
-// Executed in a worker thread
 static void
-gencb_worker_cb(void *arg)
+gencb_httpd(httpd_backend *backend, void *arg)
 {
-  struct cmdargs *cmd = arg;
-  httpd_server *server = cmd->server;
-  httpd_backend *backend = cmd->backend;
-  struct httpd_request *hreq;
-
-  hreq = httpd_request_new(backend, NULL, NULL);
-  if (!hreq)
-    {
-      evhttp_send_error(backend, HTTP_INTERNAL, "Internal error");
-      return;
-    }
-
-  evhttp_request_set_on_complete_cb(backend, request_free_cb, hreq);
-
-  server->request_cb(hreq, server->request_cb_arg);
-}
-
-// Callback from evhttp in httpd thread
-static void
-gencb_httpd(httpd_backend *backend, void *server)
-{
+  httpd_server *server = arg;
   struct cmdargs cmd;
-
-  cmd.server = server;
-  cmd.backend = backend;
 
   // Clear the proxy request flag set by evhttp if the request URI was absolute.
   // It has side-effects on Connection: keep-alive
   backend->flags &= ~EVHTTP_PROXY_REQUEST;
 
-  // Defer the execution to a worker thread
-  worker_execute(gencb_worker_cb, &cmd, sizeof(cmd), 0);
+  cmd.server = server;
+  cmd.hreq = httpd_request_new(backend, NULL, NULL);
+  if (!cmd.hreq)
+    {
+      evhttp_send_error(backend, HTTP_INTERNAL, "Internal error");
+      return;
+    }
+
+  evhttp_request_set_on_complete_cb(backend, request_free_cb, cmd.hreq);
+
+  server->request_cb(cmd.hreq, server->request_cb_arg);
 }
 
 void
@@ -268,7 +263,12 @@ httpd_server_free(httpd_server *server)
   if (!server)
     return;
 
-  evhttp_free(server->evhttp);
+  if (server->fd > 0)
+    close(server->fd);
+
+  if (server->evhttp)
+    evhttp_free(server->evhttp);
+
   free(server);
 }
 
@@ -276,6 +276,7 @@ httpd_server *
 httpd_server_new(struct event_base *evbase, unsigned short port, httpd_request_cb cb, void *arg)
 {
   httpd_server *server;
+  int yes = 1;
   int ret;
 
   CHECK_NULL(L_HTTPD, server = calloc(1, sizeof(httpd_server)));
@@ -284,7 +285,16 @@ httpd_server_new(struct event_base *evbase, unsigned short port, httpd_request_c
   server->request_cb = cb;
   server->request_cb_arg = arg;
 
-  ret = net_evhttp_bind(server->evhttp, port, "httpd");
+  server->fd = net_bind(&port, SOCK_STREAM | SOCK_NONBLOCK, "httpd");
+  if (server->fd <= 0)
+    goto error;
+
+  // Makes us able to attach multiple threads to the same port
+  ret = setsockopt(server->fd, SOL_SOCKET, SO_REUSEPORT, &yes, sizeof(yes));
+  if (ret < 0)
+    goto error;
+
+  ret = evhttp_accept_socket(server->evhttp, server->fd);
   if (ret < 0)
     goto error;
 

@@ -2349,7 +2349,7 @@ daap_reply_build(const char *uri, const char *user_agent, int is_remote)
 }
 
 static int
-daap_init(struct event_base *evbase)
+daap_init(void)
 {
   srand((unsigned)time(NULL));
   current_rev = 2;

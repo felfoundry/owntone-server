@@ -108,7 +108,7 @@ struct httpd_module
   // Pointer to the module's handler definitions
   struct httpd_uri_map *handlers;
 
-  int (*init)(struct event_base *);
+  int (*init)(void);
   void (*deinit)(void);
   void (*request)(struct httpd_request *);
 };
