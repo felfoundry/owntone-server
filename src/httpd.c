@@ -39,9 +39,6 @@
 #include <sys/ioctl.h>
 #include <syscall.h> // get thread ID
 
-#ifdef HAVE_EVENTFD
-# include <sys/eventfd.h>
-#endif
 #include <event2/event.h>
 
 #include <regex.h>
@@ -129,17 +126,6 @@ static const struct content_type_map ext2ctype[] =
   };
 
 static char webroot_directory[PATH_MAX];
-static struct event_base *evbase_httpd;
-
-#ifdef HAVE_EVENTFD
-static int exit_efd;
-#else
-static int exit_pipe[2];
-#endif
-static int httpd_exit;
-static struct event *exitev;
-static httpd_server *httpd_serv;
-static pthread_t tid_httpd;
 
 static const char *httpd_allow_origin;
 static int httpd_port;
@@ -293,22 +279,6 @@ _evthr_loop(void *args)
 }
 
 static enum evthr_res
-evthr_defer(struct evthr *thread, evthr_cb cb, void *arg)
-{
-    struct evthr_cmd cmd = {
-        .cb   = cb,
-        .args = arg,
-        .stop = 0
-    };
-
-    if (send(thread->wdr, &cmd, sizeof(cmd), 0) <= 0) {
-        return EVTHR_RES_RETRY;
-    }
-
-    return EVTHR_RES_OK;
-}
-
-static enum evthr_res
 evthr_stop(struct evthr *thread)
 {
     struct evthr_cmd cmd = {
@@ -323,12 +293,6 @@ evthr_stop(struct evthr *thread)
 
     pthread_join(*thread->thr, NULL);
     return EVTHR_RES_OK;
-}
-
-static struct event_base *
-evthr_get_base(struct evthr * thr)
-{
-    return thr ? thr->evbase : NULL;
 }
 
 static void
@@ -458,51 +422,6 @@ get_backlog_(struct evthr *thread)
     ioctl(thread->rdr, FIONREAD, &backlog);
 
     return (int)(backlog / sizeof(struct evthr_cmd));
-}
-
-static enum evthr_res
-evthr_pool_defer(struct evthr_pool *pool, evthr_cb cb, void *arg)
-{
-#ifdef EVTHR_SHARED_PIPE
-    struct evthr_cmd cmd = {
-        .cb   = cb,
-        .args = arg,
-        .stop = 0
-    };
-
-    if (send(pool->wdr, &cmd, sizeof(cmd), 0) == -1) {
-        return EVTHR_RES_RETRY;
-    }
-
-    return EVTHR_RES_OK;
-#endif
-    struct evthr *thread      = NULL;
-    struct evthr *min_thread  = NULL;
-    int min_backlog = 0;
-
-    if (pool == NULL) {
-        return EVTHR_RES_FATAL;
-    }
-
-    if (cb == NULL) {
-        return EVTHR_RES_NOCB;
-    }
-
-    TAILQ_FOREACH(thread, &pool->threads, next) {
-        int backlog = get_backlog_(thread);
-
-        if (backlog == 0) {
-            min_thread = thread;
-            break;
-        }
-
-        if (min_thread == NULL || backlog < min_backlog) {
-            min_thread  = thread;
-            min_backlog = backlog;
-        }
-    }
-
-    return evthr_defer(min_thread, cb, arg);
 }
 
 static struct evthr_pool *
@@ -1183,37 +1102,6 @@ stream_fail_cb(httpd_connection *conn, void *arg)
 
 /* ---------------------------- MAIN HTTPD THREAD --------------------------- */
 
-static void *
-httpd(void *arg)
-{
-  int ret;
-
-  ret = db_perthread_init();
-  if (ret < 0)
-    {
-      DPRINTF(E_LOG, L_HTTPD, "Error: DB init failed\n");
-
-      pthread_exit(NULL);
-    }
-
-  event_base_dispatch(evbase_httpd);
-
-  if (!httpd_exit)
-    DPRINTF(E_FATAL, L_HTTPD, "HTTPd event loop terminated ahead of time!\n");
-
-  db_perthread_deinit();
-
-  pthread_exit(NULL);
-}
-
-static void
-exit_cb(int fd, short event, void *arg)
-{
-  event_base_loopbreak(evbase_httpd);
-
-  httpd_exit = 1;
-}
-
 static int
 handle_cors_preflight(struct httpd_request *hreq, const char *allow_origin)
 {
@@ -1283,6 +1171,7 @@ httpd_stream_file(struct httpd_request *hreq, int id)
   void (*stream_cb)(int fd, short event, void *arg);
   struct stat sb;
   struct timeval tv;
+  struct event_base *evbase;
   const char *param;
   const char *param_end;
   const char *client_codecs;
@@ -1474,7 +1363,9 @@ httpd_stream_file(struct httpd_request *hreq, int id)
       goto out_cleanup;
     }
 
-  st->ev = event_new(evbase_httpd, -1, EV_TIMEOUT, stream_cb, st);
+  evbase = httpd_request_evbase_get(hreq);
+
+  st->ev = event_new(evbase, -1, EV_TIMEOUT, stream_cb, st);
   evutil_timerclear(&tv);
   if (!st->ev || (event_add(st->ev, &tv) < 0))
     {
@@ -1881,7 +1772,6 @@ int
 httpd_init(const char *webroot)
 {
   struct stat sb;
-  int exit_fd;
   int ret;
 
   DPRINTF(E_DBG, L_HTTPD, "Starting web server with root directory '%s'\n", webroot);

@@ -24,6 +24,7 @@
 #include <string.h>
 #include <unistd.h>
 #include <sys/queue.h>
+#include <sys/socket.h> // listen()
 
 #include <event2/http.h>
 #include <event2/http_struct.h>
@@ -31,7 +32,7 @@
 #include <event2/keyvalq_struct.h>
 #include <event2/buffer.h>
 
-#include "misc.h" // For net_evhttp_bind
+#include "misc.h"
 #include "logger.h"
 #include "httpd_internal.h"
 
@@ -276,7 +277,6 @@ httpd_server *
 httpd_server_new(struct event_base *evbase, unsigned short port, httpd_request_cb cb, void *arg)
 {
   httpd_server *server;
-  int yes = 1;
   int ret;
 
   CHECK_NULL(L_HTTPD, server = calloc(1, sizeof(httpd_server)));
@@ -289,8 +289,8 @@ httpd_server_new(struct event_base *evbase, unsigned short port, httpd_request_c
   if (server->fd <= 0)
     goto error;
 
-  // Makes us able to attach multiple threads to the same port
-  ret = setsockopt(server->fd, SOL_SOCKET, SO_REUSEPORT, &yes, sizeof(yes));
+  // Backlog of 128 is the same libevent uses
+  ret = listen(server->fd, 128);
   if (ret < 0)
     goto error;
 
