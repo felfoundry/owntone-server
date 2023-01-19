@@ -643,6 +643,34 @@ modules_search(const char *path)
 
 /* --------------------------- REQUEST HELPERS ------------------------------ */
 
+static void
+cors_headers_add(struct httpd_request *hreq, const char *allow_origin)
+{
+  if (allow_origin)
+    httpd_header_add(hreq->out_headers, "Access-Control-Allow-Origin", httpd_allow_origin);
+
+  httpd_header_add(hreq->out_headers, "Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS");
+  httpd_header_add(hreq->out_headers, "Access-Control-Allow-Headers", "authorization");
+}
+
+static int
+handle_cors_preflight(struct httpd_request *hreq, const char *allow_origin)
+{
+  bool is_cors_preflight;
+
+  is_cors_preflight = ( hreq->method == HTTPD_METHOD_OPTIONS && hreq->in_headers && allow_origin &&
+                        httpd_header_find(hreq->in_headers, "Origin") &&
+                        httpd_header_find(hreq->in_headers, "Access-Control-Request-Method") );
+  if (!is_cors_preflight)
+    return -1;
+
+  cors_headers_add(hreq, allow_origin);
+
+  // In this case there is no reason to go through httpd_send_reply
+  httpd_backend_reply_send(hreq->backend, HTTP_OK, "OK", NULL);
+  return 0;
+}
+
 void
 httpd_request_handler_set(struct httpd_request *hreq)
 {
@@ -1102,26 +1130,6 @@ stream_fail_cb(httpd_connection *conn, void *arg)
 
 /* ---------------------------- MAIN HTTPD THREAD --------------------------- */
 
-static int
-handle_cors_preflight(struct httpd_request *hreq, const char *allow_origin)
-{
-  bool is_cors_preflight;
-
-  is_cors_preflight = ( hreq->method == HTTPD_METHOD_OPTIONS && hreq->in_headers && allow_origin &&
-                        httpd_header_find(hreq->in_headers, "Origin") &&
-                        httpd_header_find(hreq->in_headers, "Access-Control-Request-Method") );
-  if (!is_cors_preflight)
-    return -1;
-
-  httpd_header_add(hreq->out_headers, "Access-Control-Allow-Origin", allow_origin);
-  httpd_header_add(hreq->out_headers, "Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS");
-  httpd_header_add(hreq->out_headers, "Access-Control-Allow-Headers", "authorization");
-
-  // In this case there is no reason to go through httpd_send_reply
-  httpd_backend_reply_send(hreq->backend, HTTP_OK, "OK", NULL);
-  return 0;
-}
-
 static void
 request_cb(struct httpd_request *hreq, void *arg)
 {
@@ -1539,8 +1547,7 @@ httpd_send_reply(struct httpd_request *hreq, int code, const char *reason, struc
               (strstr(param, "gzip") || strstr(param, "*"))
             );
 
-  if (httpd_allow_origin)
-    httpd_header_add(hreq->out_headers, "Access-Control-Allow-Origin", httpd_allow_origin);
+  cors_headers_add(hreq, httpd_allow_origin);
 
   if (do_gzip && (gzbuf = httpd_gzip_deflate(evbuf)))
     {
@@ -1562,6 +1569,8 @@ httpd_send_reply(struct httpd_request *hreq, int code, const char *reason, struc
 void
 httpd_send_reply_start(struct httpd_request *hreq, int code, const char *reason)
 {
+  cors_headers_add(hreq, httpd_allow_origin);
+
   httpd_backend_reply_start_send(hreq->backend, code, reason);
 }
 
@@ -1585,8 +1594,8 @@ httpd_send_error(struct httpd_request *hreq, int error, const char *reason)
 
   httpd_headers_clear(hreq->out_headers);
 
-  if (httpd_allow_origin)
-    httpd_header_add(hreq->out_headers, "Access-Control-Allow-Origin", httpd_allow_origin);
+  cors_headers_add(hreq, httpd_allow_origin);
+
   httpd_header_add(hreq->out_headers, "Content-Type", "text/html");
   httpd_header_add(hreq->out_headers, "Connection", "close");
 
@@ -1840,11 +1849,13 @@ httpd_init(const char *webroot)
 void
 httpd_deinit(void)
 {
-  evthr_pool_stop(httpd_threadpool);
-  evthr_pool_free(httpd_threadpool);
+  // Give modules a chance to hang up connections nicely
+  modules_deinit();
 
 #ifdef HAVE_LIBWEBSOCKETS
   websocket_deinit();
 #endif
-  modules_deinit();
+
+  evthr_pool_stop(httpd_threadpool);
+  evthr_pool_free(httpd_threadpool);
 }

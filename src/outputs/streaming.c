@@ -54,7 +54,9 @@ struct streaming_wanted
 {
   bool keep;
   int fd[2]; // pipe where 0 is reading end, 1 is writing
-  enum streaming_formats format;
+  size_t bytes_written;
+
+  enum streaming_format format;
   struct media_quality quality_in;
   struct media_quality quality_out;
 
@@ -112,7 +114,7 @@ fd_open(int fd[2])
 #endif
   if (ret < 0)
     {
-      DPRINTF(E_FATAL, L_STREAMING, "Could not create pipe: %s\n", strerror(errno));
+      DPRINTF(E_LOG, L_STREAMING, "Could not create pipe: %s\n", strerror(errno));
       fd[0] = -1;
       fd[1] = -1;
       return -1;
@@ -179,7 +181,7 @@ wanted_remove(struct streaming_wanted **wanted, struct streaming_wanted *remove)
 }
 
 static struct streaming_wanted *
-wanted_new(enum streaming_formats format, struct media_quality quality)
+wanted_new(enum streaming_format format, struct media_quality quality)
 {
   struct streaming_wanted *w;
 
@@ -193,9 +195,9 @@ wanted_new(enum streaming_formats format, struct media_quality quality)
 }
 
 static void
-wanted_set(struct streaming_wanted **wanted, struct httpd_streaming_clients *clients)
+wanted_set(struct streaming_wanted **wanted, struct httpd_streaming_client *clients)
 {
-  struct httpd_streaming_clients *c;
+  struct httpd_streaming_client *c;
   struct streaming_wanted *w;
   struct streaming_wanted *next;
 
@@ -327,9 +329,12 @@ encode_and_write(struct streaming_wanted *w, struct media_quality quality_in, tr
   ret = evbuffer_write(w->encoded_data, w->fd[1]);
   if (ret < 0)
     {
-      DPRINTF(E_LOG, L_STREAMING, "Error writing to stream pipe %d (format %d)\n", w->fd[1], w->format);
+      DPRINTF(E_LOG, L_STREAMING, "Error writing to stream pipe %d (format %d): %s\n", w->fd[1], w->format, strerror(errno));
       return -1;
     }
+
+//  w->bytes_written += ret;
+//  DPRINTF(E_DBG, L_STREAMING, "Wrote %zu bytes to the streaming pipe\n", w->bytes_written);
 
   return 0;
 }
@@ -428,7 +433,7 @@ silenceev_cb(evutil_socket_t fd, short event, void *arg)
 static void
 clientev_cb(evutil_socket_t fd, short event, void *arg)
 {
-  struct httpd_streaming_clients *clients;
+  struct httpd_streaming_client *clients;
 
   clients = httpd_streaming_clientinfo_get();
 

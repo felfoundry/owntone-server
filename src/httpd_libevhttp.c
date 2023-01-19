@@ -143,7 +143,7 @@ struct event_base *
 httpd_request_evbase_get(struct httpd_request *hreq)
 {
   httpd_connection *conn = httpd_request_connection_get(hreq);
-  if (conn)
+  if (!conn)
     return NULL;
 
   return evhttp_connection_get_base(conn);
