@@ -28,8 +28,6 @@ enum listener_event_type
   LISTENER_LASTFM = (1 << 10),
   /* Song rating changes */
   LISTENER_RATING = (1 << 11),
-  /* Streaming client connect/disconnect */
-  LISTENER_STREAMING = (1 << 12),
 };
 
 typedef void (*notify)(short event_mask);

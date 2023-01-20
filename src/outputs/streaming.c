@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2016 Espen Jürgensen <espenjurgensen@gmail.com>
+ * Copyright (C) 2023 Espen Jürgensen <espenjurgensen@gmail.com>
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -28,13 +28,12 @@
 #include <uninorm.h>
 #include <fcntl.h>
 
+#include "streaming.h"
 #include "outputs.h"
 #include "misc.h"
 #include "worker.h"
 #include "transcode.h"
 #include "logger.h"
-#include "listener.h"
-#include "httpd_streaming.h"
 
 /* About
  *
@@ -48,13 +47,21 @@
 // client from hanging up). This value matches the player tick interval.
 #define SILENCE_TICKS_PER_SEC 100
 
-// #define DEBUG_WRITE_MP3 1
+// The wanted structure represents a particular format and quality that should
+// be produced for one or more sessions. A pipe pair is created for each session
+// for the i/o.
+#define WANTED_PIPES_MAX 8
+
+struct pipepair
+{
+  int writefd;
+  int readfd;
+};
 
 struct streaming_wanted
 {
-  bool keep;
-  int fd[2]; // pipe where 0 is reading end, 1 is writing
-  size_t bytes_written;
+  int refcount;
+  struct pipepair pipes[WANTED_PIPES_MAX];
 
   enum streaming_format format;
   struct media_quality quality_in;
@@ -69,7 +76,6 @@ struct streaming_wanted
 struct streaming_ctx
 {
   struct streaming_wanted *wanted;
-  struct event *clientev;
   struct event *silenceev;
   struct timeval silencetv;
   struct media_quality last_quality;
@@ -92,16 +98,14 @@ static struct streaming_ctx streaming =
 extern struct event_base *evbase_player;
 
 
-/* -----------------------------ICY Utilities ------------------------------- */
-
-
 /* ------------------------------- Helpers ---------------------------------- */
 
-#ifndef DEBUG_WRITE_MP3
 static int
-fd_open(int fd[2])
+pipe_open(struct pipepair *pipe)
 {
+  int fd[2];
   int ret;
+
 #ifdef HAVE_PIPE2
   ret = pipe2(fd, O_CLOEXEC | O_NONBLOCK);
 #else
@@ -115,35 +119,24 @@ fd_open(int fd[2])
   if (ret < 0)
     {
       DPRINTF(E_LOG, L_STREAMING, "Could not create pipe: %s\n", strerror(errno));
-      fd[0] = -1;
-      fd[1] = -1;
       return -1;
     }
 
+  pipe->writefd = fd[1];
+  pipe->readfd = fd[0];
   return 0;
 }
-#else
-static int
-fd_open(int fd[2])
-{
-  fd[1] = open("testfile.mp3", O_CREAT | O_RDWR, 0664);
-  if (fd[1] < 0)
-    {
-      DPRINTF(E_DBG, L_STREAMING, "Error opening file: %s\n", strerror(errno));
-      return -1;
-    }
-  fd[0] = -1;
-  return 0;
-}
-#endif
 
 static void
-fd_close(int fd[2])
+pipe_close(struct pipepair *pipe)
 {
-  if (fd[0] >= 0)
-    close(fd[0]);
-  if (fd[1] >= 0)
-    close(fd[1]);
+  if (pipe->readfd >= 0)
+    close(pipe->readfd);
+  if (pipe->writefd >= 0)
+    close(pipe->writefd);
+
+  pipe->writefd = -1;
+  pipe->readfd = -1;
 }
 
 static void
@@ -151,8 +144,31 @@ wanted_free(struct streaming_wanted *w)
 {
   if (!w)
     return;
-  fd_close(w->fd);
+
+  for (int i = 0; i < WANTED_PIPES_MAX; i++)
+    pipe_close(&w->pipes[i]);
+
   free(w);
+}
+
+static struct streaming_wanted *
+wanted_new(enum streaming_format format, struct media_quality quality)
+{
+  struct streaming_wanted *w;
+
+  CHECK_NULL(L_STREAMING, w = calloc(1, sizeof(struct streaming_wanted)));
+  CHECK_NULL(L_STREAMING, w->encoded_data = evbuffer_new());
+
+  w->quality_out = quality;
+  w->format = format;
+
+  for (int i = 0; i < WANTED_PIPES_MAX; i++)
+    {
+      w->pipes[i].writefd = -1;
+      w->pipes[i].readfd = -1;
+    }
+
+  return w;
 }
 
 static void
@@ -181,91 +197,104 @@ wanted_remove(struct streaming_wanted **wanted, struct streaming_wanted *remove)
 }
 
 static struct streaming_wanted *
-wanted_new(enum streaming_format format, struct media_quality quality)
+wanted_add(struct streaming_wanted **wanted, enum streaming_format format, struct media_quality quality)
 {
   struct streaming_wanted *w;
 
-  CHECK_NULL(L_STREAMING, w = calloc(1, sizeof(struct streaming_wanted)));
-  CHECK_NULL(L_STREAMING, w->encoded_data = evbuffer_new());
+  w = wanted_new(format, quality);
+  w->next = *wanted;
+  *wanted = w;
 
-  fd_open(w->fd);
-  w->quality_out = quality;
-  w->format = format;
   return w;
 }
 
-static void
-wanted_set(struct streaming_wanted **wanted, struct httpd_streaming_client *clients)
+static struct streaming_wanted *
+wanted_find_byformat(struct streaming_wanted *wanted, enum streaming_format format, struct media_quality quality)
 {
-  struct httpd_streaming_client *c;
   struct streaming_wanted *w;
-  struct streaming_wanted *next;
 
-  for (c = clients; c; c = c->next)
+  for (w = wanted; w; w = w->next)
     {
-      for (w = *wanted; w; w = w->next)
-	{
-	  if (c->format == w->format && quality_is_equal(&c->quality, &w->quality_out))
-	    break;
-	}
-
-      if (!w)
-	{
-	  w = wanted_new(c->format, c->quality);
-	  w->next = *wanted;
-	  *wanted = w;
-	}
-
-      w->keep = true;
-      httpd_streaming_fd_set(c, w->fd[0]);
+      if (w->format == format && quality_is_equal(&w->quality_out, &quality))
+	return w;
     }
 
-  for (w = *wanted; w; w = next)
+  return NULL;
+}
+
+static struct streaming_wanted *
+wanted_find_byreadfd(struct streaming_wanted *wanted, int readfd)
+{
+  struct streaming_wanted *w;
+  int i;
+
+  for (w = wanted; w; w = w->next)
+    for (i = 0; i < WANTED_PIPES_MAX; i++)
+      {
+	if (w->pipes[i].readfd == readfd)
+	  return w;
+      }
+
+  return NULL;
+}
+
+static int
+wanted_session_add(struct pipepair *pipe, struct streaming_wanted *w)
+{
+  int ret;
+  int i;
+
+  for (i = 0; i < WANTED_PIPES_MAX; i++)
     {
-      next = w->next;
-      if (!w->keep)
-	wanted_remove(wanted, w);
-      else
-	w->keep = false;
+      if (w->pipes[i].writefd != -1) // In use
+	continue;
+
+      ret = pipe_open(&w->pipes[i]);
+      if (ret < 0)
+	return -1;
+
+      memcpy(pipe, &w->pipes[i], sizeof(struct pipepair));
+      break;
     }
+
+  if (i == WANTED_PIPES_MAX)
+    {
+      DPRINTF(E_LOG, L_STREAMING, "Cannot add streaming session, max pipe limit reached\n");
+      return -1;
+    }
+
+  w->refcount++;
+  DPRINTF(E_DBG, L_STREAMING, "Session register readfd %d, wanted->refcount=%d\n", pipe->readfd, w->refcount);
+  return 0;
+}
+
+
+static void
+wanted_session_remove(struct streaming_wanted *w, int readfd)
+{
+  int i;
+
+  for (i = 0; i < WANTED_PIPES_MAX; i++)
+    {
+      if (w->pipes[i].readfd != readfd)
+	continue;
+
+      pipe_close(&w->pipes[i]);
+      break;
+    }
+
+  if (i == WANTED_PIPES_MAX)
+    {
+      DPRINTF(E_LOG, L_STREAMING, "Cannot remove streaming session, readfd %d not found\n", readfd);
+      return;
+    }
+
+  w->refcount--;
+  DPRINTF(E_DBG, L_STREAMING, "Session deregister readfd %d, wanted->refcount=%d\n", readfd, w->refcount);
 }
 
 
 /* ----------------------------- Thread: Worker ----------------------------- */
-
-/*
-static void
-icy_handle(struct streaming_wanted *w)
-{
-  len = evbuffer_get_length(w->encoded_data);
-
-  count = w->bytes_since_metablock + len;
-  if (count <= streaming_icy_metaint)
-    {
-      w->bytes_since_metablock += len;
-      return;
-    }
-
-  overflow = count % streaming_icy_metaint; // TODO can overflow be larger than len??
-
-  evbuffer_remove_buffer(w->encoded_audio, evbuf, len - overflow);
-  evbuffer_add(evbuf, meta, metalen);
-  evbuffer_add_buffer(w->encoded_audio, evbuf);
-  swap_pointers(&evbuf, &w->encoded_audio);
-  free(evbuf);
-
-  // Splice the 'icy title' in with the encoded audio data
-  splice_buf = streaming_icy_meta_splice(buf, len, len - overflow, &splice_len);
-  if (!splice_buf)
-    goto out;
-
-  evbuffer_add(evbuf, splice_buf, splice_len);
-
-  free(splice_buf);
-
-  session->bytes_since_metablock = overflow;
-}
-*/
 
 static int
 encode_reset(struct streaming_wanted *w, struct media_quality quality_in)
@@ -302,10 +331,9 @@ encode_reset(struct streaming_wanted *w, struct media_quality quality_in)
 }
 
 static int
-encode_and_write(struct streaming_wanted *w, struct media_quality quality_in, transcode_frame *frame)
+encode_frame(struct streaming_wanted *w, struct media_quality quality_in, transcode_frame *frame)
 {
   int ret;
-  size_t len;
 
   if (!w->xcode_ctx || !quality_is_equal(&quality_in, &w->quality_in))
     {
@@ -320,23 +348,23 @@ encode_and_write(struct streaming_wanted *w, struct media_quality quality_in, tr
       return -1;
     }
 
-  len = evbuffer_get_length(w->encoded_data);
-  if (len == 0)
-    {
-      return 0;
-    }
+  return 0;
+}
 
-  ret = evbuffer_write(w->encoded_data, w->fd[1]);
+static void
+encode_write(uint8_t *buf, size_t buflen, struct streaming_wanted *w, struct pipepair *pipe)
+{
+  int ret;
+
+  if (pipe->writefd < 0)
+    return;
+
+  ret = write(pipe->writefd, buf, buflen);
   if (ret < 0)
     {
-      DPRINTF(E_LOG, L_STREAMING, "Error writing to stream pipe %d (format %d): %s\n", w->fd[1], w->format, strerror(errno));
-      return -1;
+      DPRINTF(E_LOG, L_STREAMING, "Error writing to stream pipe %d (format %d): %s\n", pipe->writefd, w->format, strerror(errno));
+      wanted_session_remove(w, pipe->readfd);
     }
-
-//  w->bytes_written += ret;
-//  DPRINTF(E_DBG, L_STREAMING, "Wrote %zu bytes to the streaming pipe\n", w->bytes_written);
-
-  return 0;
 }
 
 static void
@@ -346,7 +374,10 @@ encode_data_cb(void *arg)
   transcode_frame *frame;
   struct streaming_wanted *w;
   struct streaming_wanted *next;
+  uint8_t *buf;
+  size_t len;
   int ret;
+  int i;
 
   frame = transcode_frame_new(ctx->buf, ctx->bufsize, ctx->samples, &ctx->quality);
   if (!frame)
@@ -359,9 +390,23 @@ encode_data_cb(void *arg)
   for (w = streaming.wanted; w; w = next)
     {
       next = w->next;
-      ret = encode_and_write(w, ctx->quality, frame);
+      ret = encode_frame(w, ctx->quality, frame);
       if (ret < 0)
-	wanted_remove(&streaming.wanted, w); // This will close the fd, so httpd reader will get an error
+	wanted_remove(&streaming.wanted, w); // This will close all the fds, so readers get an error
+
+      len = evbuffer_get_length(w->encoded_data);
+      if (len == 0)
+	continue;
+
+      buf = evbuffer_pullup(w->encoded_data, -1);
+
+      for (i = 0; i < WANTED_PIPES_MAX; i++)
+	encode_write(buf, len, w, &w->pipes[i]);
+
+      evbuffer_drain(w->encoded_data, -1);
+
+      if (w->refcount == 0)
+	wanted_remove(&streaming.wanted, w);
     }
   pthread_mutex_unlock(&streaming_wanted_lck);
 
@@ -430,51 +475,60 @@ silenceev_cb(evutil_socket_t fd, short event, void *arg)
   encode_worker_invoke(rawbuf, bufsize, samples, streaming.last_quality);
 }
 
-static void
-clientev_cb(evutil_socket_t fd, short event, void *arg)
-{
-  struct httpd_streaming_client *clients;
-
-  clients = httpd_streaming_clientinfo_get();
-
-  // We must produce an output for each unique wanted format + quality
-  pthread_mutex_lock(&streaming_wanted_lck);
-  wanted_set(&streaming.wanted, clients);
-  pthread_mutex_unlock(&streaming_wanted_lck);
-
-  httpd_streaming_clientinfo_free(clients);
-
-  if (!streaming.wanted)
-    {
-      evtimer_del(streaming.silenceev);
-      return;
-    }
-}
-
-
 /* ----------------------------- Thread: httpd ------------------------------ */
 
-static void
-streaming_listener_cb(short event_mask)
+int
+streaming_session_register(enum streaming_format format, struct media_quality quality)
 {
-  event_active(streaming.clientev, 0, 0);
+  struct streaming_wanted *w;
+  struct pipepair pipe;
+  int ret;
+
+  pthread_mutex_lock(&streaming_wanted_lck);
+  w = wanted_find_byformat(streaming.wanted, format, quality);
+  if (!w)
+    w = wanted_add(&streaming.wanted, format, quality);
+
+  ret = wanted_session_add(&pipe, w);
+  if (ret < 0)
+    pipe.readfd = -1;
+
+  pthread_mutex_unlock(&streaming_wanted_lck);
+
+  return pipe.readfd;
+}
+
+void
+streaming_session_deregister(int readfd)
+{
+  struct streaming_wanted *w;
+
+  pthread_mutex_lock(&streaming_wanted_lck);
+  w = wanted_find_byreadfd(streaming.wanted, readfd);
+  if (!w)
+    goto out;
+
+  wanted_session_remove(w, readfd);
+
+  if (w->refcount == 0)
+    wanted_remove(&streaming.wanted, w);
+
+ out:
+  pthread_mutex_unlock(&streaming_wanted_lck);
 }
 
 static int
 streaming_init(void)
 {
-  CHECK_NULL(L_STREAMING, streaming.clientev = event_new(evbase_player, -1, 0, clientev_cb, NULL));
   CHECK_NULL(L_STREAMING, streaming.silenceev = event_new(evbase_player, -1, 0, silenceev_cb, NULL));
   CHECK_ERR(L_STREAMING,  mutex_init(&streaming_wanted_lck));
 
-  listener_add(streaming_listener_cb, LISTENER_STREAMING);
   return 0;
 }
 
 static void
 streaming_deinit(void)
 {
-  event_free(streaming.clientev);
   event_free(streaming.silenceev);
 }
 
