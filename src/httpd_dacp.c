@@ -797,7 +797,10 @@ update_fail_cb(httpd_connection *conn, void *arg)
   DPRINTF(E_DBG, L_DACP, "Update request: client closed connection\n");
 
   httpd_request_closecb_set(ur->hreq, NULL, NULL);
-  httpd_request_backend_free(ur->hreq); // TODO check if still necessary
+
+  // Peer won't get this, it is just to make sure hreq and evhttp's request get
+  // freed
+  httpd_send_error(ur->hreq, HTTP_BADREQUEST, "Bad Request");
 
   pthread_mutex_lock(&update_request_lck);
   update_request_remove(&update_requests, ur);

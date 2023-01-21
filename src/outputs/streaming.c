@@ -148,6 +148,7 @@ wanted_free(struct streaming_wanted *w)
   for (int i = 0; i < WANTED_PIPES_MAX; i++)
     pipe_close(&w->pipes[i]);
 
+  transcode_encode_cleanup(&w->xcode_ctx);
   evbuffer_free(w->encoded_data);
   free(w);
 }
@@ -316,7 +317,7 @@ encode_reset(struct streaming_wanted *w, struct media_quality quality_in)
     {
       DPRINTF(E_LOG, L_STREAMING, "Error setting up decoder for input quality sr %d, bps %d, ch %d, cannot MP3 encode\n",
 	quality_in.sample_rate, quality_in.bits_per_sample, quality_in.channels);
-      return -1;
+      goto error;
     }
 
   w->quality_in = quality_in;
@@ -325,10 +326,15 @@ encode_reset(struct streaming_wanted *w, struct media_quality quality_in)
     {
       DPRINTF(E_LOG, L_STREAMING, "Error setting up encoder for output quality sr %d, bps %d, ch %d, cannot MP3 encode\n",
 	quality_out.sample_rate, quality_out.bits_per_sample, quality_out.channels);
-      return -1;
+      goto error;
     }
 
+  transcode_decode_cleanup(&decode_ctx);
   return 0;
+
+ error:
+  transcode_decode_cleanup(&decode_ctx);
+  return -1;
 }
 
 static int
@@ -448,15 +454,15 @@ streaming_write(struct output_buffer *obuf)
     return;
 
   // Need to make a copy since it will be passed of to the async worker
-  rawbuf = malloc(obuf->data[0].bufsize);
+  CHECK_NULL(L_STREAMING, rawbuf = malloc(obuf->data[0].bufsize));
   memcpy(rawbuf, obuf->data[0].buffer, obuf->data[0].bufsize);
-
-  // In case this is the last player write() we want to start streaming silence
-  evtimer_add(streaming.silenceev, &streaming.silencetv);
 
   encode_worker_invoke(rawbuf, obuf->data[0].bufsize, obuf->data[0].samples, obuf->data[0].quality);
 
   streaming.last_quality = obuf->data[0].quality;
+
+  // In case this is the last player write() we want to start streaming silence
+  evtimer_add(streaming.silenceev, &streaming.silencetv);
 }
 
 static void
@@ -466,14 +472,16 @@ silenceev_cb(evutil_socket_t fd, short event, void *arg)
   size_t bufsize;
   int samples;
 
+  // TODO what if everyone has disconnected? Check for streaming.wanted?
+
   samples = streaming.last_quality.sample_rate / SILENCE_TICKS_PER_SEC;
   bufsize = STOB(samples, streaming.last_quality.bits_per_sample, streaming.last_quality.channels);
 
-  rawbuf = calloc(1, bufsize);
-
-  evtimer_add(streaming.silenceev, &streaming.silencetv);
+  CHECK_NULL(L_STREAMING, rawbuf = calloc(1, bufsize));
 
   encode_worker_invoke(rawbuf, bufsize, samples, streaming.last_quality);
+
+  evtimer_add(streaming.silenceev, &streaming.silencetv);
 }
 
 /* ----------------------------- Thread: httpd ------------------------------ */

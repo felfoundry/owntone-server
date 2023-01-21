@@ -31,6 +31,7 @@
 #include <event2/http_compat.h>
 #include <event2/keyvalq_struct.h>
 #include <event2/buffer.h>
+#include <event2/bufferevent.h>
 
 #include "misc.h"
 #include "logger.h"
@@ -150,7 +151,6 @@ httpd_request_free(struct httpd_request *hreq)
 {
   alloc_count--;
   DPRINTF(E_LOG, L_HTTPD, "DEALLOC - COUNT %d\n", alloc_count);
-  return;
 
   if (!hreq)
     return;
@@ -226,10 +226,20 @@ gencb_httpd(httpd_backend *backend, void *arg)
 {
   httpd_server *server = arg;
   struct httpd_request *hreq;
+  struct bufferevent *bufev;
 
   // Clear the proxy request flag set by evhttp if the request URI was absolute.
   // It has side-effects on Connection: keep-alive
   backend->flags &= ~EVHTTP_PROXY_REQUEST;
+
+  // This is a workaround for some versions of libevent (2.0 and 2.1) that don't
+  // detect if the client hangs up, and thus don't clean up and never call the
+  // connection close cb(). See github issue #870 and
+  // https://github.com/libevent/libevent/issues/666. It should probably be
+  // removed again in the future.
+  bufev = evhttp_connection_get_bufferevent(evhttp_request_get_connection(backend));
+  if (bufev)
+    bufferevent_enable(bufev, EV_READ);
 
   hreq = httpd_request_new(backend, NULL, NULL);
   if (!hreq)

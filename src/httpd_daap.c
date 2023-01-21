@@ -315,7 +315,9 @@ update_fail_cb(httpd_connection *conn, void *arg)
 
   httpd_request_closecb_set(ur->hreq, NULL, NULL);
 
-  httpd_request_backend_free(ur->hreq); // TODO check if still necessary
+  // Peer won't get this, it is just to make sure hreq and evhttp's request get
+  // freed
+  httpd_send_error(ur->hreq, HTTP_BADREQUEST, "Bad Request");
   update_remove(ur);
 }
 
@@ -667,7 +669,7 @@ daap_reply_send(struct httpd_request *hreq, enum daap_reply_result result)
   switch (result)
     {
       case DAAP_REPLY_LOGOUT:
-	httpd_send_reply(hreq, 204, "Logout Successful", hreq->out_body, 0);
+	httpd_send_reply(hreq, HTTP_NOCONTENT, "Logout Successful", hreq->out_body, 0);
 	break;
       case DAAP_REPLY_NO_CONTENT:
 	httpd_send_reply(hreq, HTTP_NOCONTENT, "No Content", hreq->out_body, HTTPD_SEND_NO_GZIP);
@@ -680,7 +682,7 @@ daap_reply_send(struct httpd_request *hreq, enum daap_reply_result result)
 	httpd_send_reply(hreq, HTTP_OK, "OK", hreq->out_body, HTTPD_SEND_NO_GZIP);
 	break;
       case DAAP_REPLY_FORBIDDEN:
-	httpd_send_error(hreq, 403, "Forbidden");
+	httpd_send_error(hreq, HTTP_FORBIDDEN, "Forbidden");
 	break;
       case DAAP_REPLY_BAD_REQUEST:
 	httpd_send_error(hreq, HTTP_BADREQUEST, "Bad Request");
