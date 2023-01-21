@@ -668,6 +668,7 @@ handle_cors_preflight(struct httpd_request *hreq, const char *allow_origin)
 
   // In this case there is no reason to go through httpd_send_reply
   httpd_backend_reply_send(hreq->backend, HTTP_OK, "OK", NULL);
+  httpd_request_free(hreq);
   return 0;
 }
 
@@ -1564,6 +1565,8 @@ httpd_send_reply(struct httpd_request *hreq, int code, const char *reason, struc
     {
       httpd_backend_reply_send(hreq->backend, code, reason, evbuf);
     }
+
+  httpd_request_free(hreq);
 }
 
 void
@@ -1584,6 +1587,7 @@ void
 httpd_send_reply_end(struct httpd_request *hreq)
 {
   httpd_backend_reply_end_send(hreq->backend);
+  httpd_request_free(hreq);
 }
 
 // This is a modified version of evhttp_send_error (credit libevent)
@@ -1609,6 +1613,8 @@ httpd_send_error(struct httpd_request *hreq, int error, const char *reason)
 
   if (evbuf)
     evbuffer_free(evbuf);
+
+  httpd_request_free(hreq);
 }
 
 bool

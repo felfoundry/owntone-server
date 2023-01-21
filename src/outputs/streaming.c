@@ -148,6 +148,7 @@ wanted_free(struct streaming_wanted *w)
   for (int i = 0; i < WANTED_PIPES_MAX; i++)
     pipe_close(&w->pipes[i]);
 
+  evbuffer_free(w->encoded_data);
   free(w);
 }
 

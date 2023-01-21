@@ -94,9 +94,9 @@ session_end(struct streaming_session *session)
 {
   DPRINTF(E_INFO, L_STREAMING, "Stopping mp3 streaming to %s:%d\n", session->hreq->peer_address, (int)session->hreq->peer_port);
 
-  // Valgrind says libevent doesn't free the request on disconnect (even though it owns it - libevent bug?),
-  // so we do it with a reply end
-  // TODO on_complete won't be triggered so hreq memleaks
+  // Valgrind says libevent doesn't free the request on disconnect (even though
+  // it owns it - libevent bug?), so we do it with a reply end. This also makes
+  // sure the hreq gets freed.
   httpd_send_reply_end(session->hreq);
   session_free(session);
 }
@@ -162,8 +162,6 @@ streaming_mp3_handler(struct httpd_request *hreq)
 
   // Ask streaming output module for a fd to read mp3 from
   session->fd = streaming_session_register(STREAMING_FORMAT_MP3, streaming_default_quality);
-
-  DPRINTF(E_DBG, L_STREAMING, "Session %p watching fd %d\n", session, session->fd);
 
   CHECK_NULL(L_STREAMING, evbase = httpd_request_evbase_get(hreq));
   CHECK_NULL(L_STREAMING, session->readev = event_new(evbase, session->fd, EV_READ | EV_PERSIST, read_cb, session));

@@ -222,14 +222,6 @@ httpd_request_new(httpd_backend *backend, const char *uri, const char *user_agen
 }
 
 static void
-request_free_cb(httpd_backend *backend, void *arg)
-{
-  struct httpd_request *hreq = arg;
-
-  httpd_request_free(hreq);
-}
-
-static void
 gencb_httpd(httpd_backend *backend, void *arg)
 {
   httpd_server *server = arg;
@@ -245,8 +237,6 @@ gencb_httpd(httpd_backend *backend, void *arg)
       evhttp_send_error(backend, HTTP_INTERNAL, "Internal error");
       return;
     }
-
-  evhttp_request_set_on_complete_cb(backend, request_free_cb, hreq);
 
   server->request_cb(hreq, server->request_cb_arg);
 }
