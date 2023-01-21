@@ -138,7 +138,6 @@ struct httpd_request {
   // Backend private request object
   httpd_backend *backend;
   // For storing data that the actual backend doesn't have readily available
-  // e.g. peer address string for libevhtp
   httpd_backend_data *backend_data;
   // User-agent (if available)
   const char *user_agent;

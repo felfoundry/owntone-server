@@ -53,12 +53,6 @@ struct httpd_server
   void *request_cb_arg;
 };
 
-struct cmdargs
-{
-  httpd_server *server;
-  struct httpd_request *hreq;
-};
-
 
 const char *
 httpd_query_value_find(httpd_query *query, const char *key)
@@ -239,23 +233,22 @@ static void
 gencb_httpd(httpd_backend *backend, void *arg)
 {
   httpd_server *server = arg;
-  struct cmdargs cmd;
+  struct httpd_request *hreq;
 
   // Clear the proxy request flag set by evhttp if the request URI was absolute.
   // It has side-effects on Connection: keep-alive
   backend->flags &= ~EVHTTP_PROXY_REQUEST;
 
-  cmd.server = server;
-  cmd.hreq = httpd_request_new(backend, NULL, NULL);
-  if (!cmd.hreq)
+  hreq = httpd_request_new(backend, NULL, NULL);
+  if (!hreq)
     {
       evhttp_send_error(backend, HTTP_INTERNAL, "Internal error");
       return;
     }
 
-  evhttp_request_set_on_complete_cb(backend, request_free_cb, cmd.hreq);
+  evhttp_request_set_on_complete_cb(backend, request_free_cb, hreq);
 
-  server->request_cb(cmd.hreq, server->request_cb_arg);
+  server->request_cb(hreq, server->request_cb_arg);
 }
 
 void
