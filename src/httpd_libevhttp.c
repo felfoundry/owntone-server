@@ -23,12 +23,11 @@
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
-#include <sys/queue.h>
+#include <sys/queue.h> // TAILQ_FOREACH
 #include <sys/socket.h> // listen()
 
 #include <event2/http.h>
-#include <event2/http_struct.h>
-#include <event2/http_compat.h>
+#include <event2/http_struct.h> // flags in struct evhttp
 #include <event2/keyvalq_struct.h>
 #include <event2/buffer.h>
 #include <event2/bufferevent.h>
@@ -37,6 +36,11 @@
 #include "logger.h"
 #include "httpd_internal.h"
 
+#define DEBUG_ALLOC 1
+
+#ifdef DEBUG_ALLOC
+int debug_alloc_count;
+#endif
 
 struct httpd_uri_parsed
 {
@@ -144,13 +148,13 @@ httpd_request_evbase_get(struct httpd_request *hreq)
   return evhttp_connection_get_base(conn);
 }
 
-int alloc_count;
-
 void
 httpd_request_free(struct httpd_request *hreq)
 {
-  alloc_count--;
-  DPRINTF(E_LOG, L_HTTPD, "DEALLOC - COUNT %d\n", alloc_count);
+#ifdef DEBUG_ALLOC
+  debug_alloc_count--;
+  DPRINTF(E_LOG, L_HTTPD, "DEALLOC hreq - count is %d\n", debug_alloc_count);
+#endif
 
   if (!hreq)
     return;
@@ -171,8 +175,10 @@ httpd_request_new(httpd_backend *backend, const char *uri, const char *user_agen
 
   CHECK_NULL(L_HTTPD, hreq = calloc(1, sizeof(struct httpd_request)));
 
-  alloc_count++;
-  DPRINTF(E_LOG, L_HTTPD, "ALLOC - COUNT %d\n", alloc_count);
+#ifdef DEBUG_ALLOC
+  debug_alloc_count++;
+  DPRINTF(E_LOG, L_HTTPD, "ALLOC hreq - count is %d\n", debug_alloc_count);
+#endif
 
   // Populate hreq by getting values from the backend (or from the caller)
   hreq->backend = backend;
