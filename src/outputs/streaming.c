@@ -43,9 +43,14 @@
  * player, but there are clients, it instead writes silence to the fd.
  */
 
-// How many times per second we send silence when player is idle (to prevent
-// client from hanging up). This value matches the player tick interval.
-#define SILENCE_TICKS_PER_SEC 100
+// Seconds between sending silence when player is idle
+// (to prevent client from hanging up)
+#define STREAMING_SILENCE_INTERVAL 1
+
+// How many bytes of silence we encode with the above interval. There is no
+// particular reason for using this size, just that it seems to have worked for
+// a while.
+#define SILENCE_BUF_SIZE STOB(352, 16, 2)
 
 // The wanted structure represents a particular format and quality that should
 // be produced for one or more sessions. A pipe pair is created for each session
@@ -79,6 +84,10 @@ struct streaming_ctx
   struct event *silenceev;
   struct timeval silencetv;
   struct media_quality last_quality;
+
+  // seqnum may wrap around so must be unsigned
+  unsigned int seqnum;
+  unsigned int seqnum_encode_next;
 };
 
 struct encode_cmdarg
@@ -86,13 +95,16 @@ struct encode_cmdarg
   uint8_t *buf;
   size_t bufsize;
   int samples;
+  unsigned int seqnum;
   struct media_quality quality;
 };
 
 static pthread_mutex_t streaming_wanted_lck;
+static pthread_cond_t streaming_sequence_cond;
+
 static struct streaming_ctx streaming =
 {
-  .silencetv = { 0, (1000000 / SILENCE_TICKS_PER_SEC) },
+  .silencetv = { STREAMING_SILENCE_INTERVAL, 0 },
 };
 
 extern struct event_base *evbase_player;
@@ -394,9 +406,15 @@ encode_data_cb(void *arg)
     }
 
   pthread_mutex_lock(&streaming_wanted_lck);
+
+  // To make sure we process the frames in order
+  while (ctx->seqnum != streaming.seqnum_encode_next)
+    pthread_cond_wait(&streaming_sequence_cond, &streaming_wanted_lck);
+
   for (w = streaming.wanted; w; w = next)
     {
       next = w->next;
+
       ret = encode_frame(w, ctx->quality, frame);
       if (ret < 0)
 	wanted_remove(&streaming.wanted, w); // This will close all the fds, so readers get an error
@@ -415,6 +433,9 @@ encode_data_cb(void *arg)
       if (w->refcount == 0)
 	wanted_remove(&streaming.wanted, w);
     }
+
+  streaming.seqnum_encode_next++;
+  pthread_cond_broadcast(&streaming_sequence_cond);
   pthread_mutex_unlock(&streaming_wanted_lck);
 
  out:
@@ -441,6 +462,9 @@ encode_worker_invoke(uint8_t *buf, size_t bufsize, int samples, struct media_qua
   ctx.bufsize = bufsize;
   ctx.samples = samples;
   ctx.quality = quality;
+  ctx.seqnum = streaming.seqnum;
+
+  streaming.seqnum++;
 
   worker_execute(encode_data_cb, &ctx, sizeof(struct encode_cmdarg), 0);
 }
@@ -450,6 +474,7 @@ streaming_write(struct output_buffer *obuf)
 {
   uint8_t *rawbuf;
 
+  // No lock since this is just an early exit, it doesn't need to be accurate
   if (!streaming.wanted)
     return;
 
@@ -472,10 +497,12 @@ silenceev_cb(evutil_socket_t fd, short event, void *arg)
   size_t bufsize;
   int samples;
 
-  // TODO what if everyone has disconnected? Check for streaming.wanted?
+  // No lock since this is just an early exit, it doesn't need to be accurate
+  if (!streaming.wanted)
+    return;
 
-  samples = streaming.last_quality.sample_rate / SILENCE_TICKS_PER_SEC;
-  bufsize = STOB(samples, streaming.last_quality.bits_per_sample, streaming.last_quality.channels);
+  bufsize = SILENCE_BUF_SIZE;
+  samples = BTOS(bufsize, streaming.last_quality.bits_per_sample, streaming.last_quality.channels);
 
   CHECK_NULL(L_STREAMING, rawbuf = calloc(1, bufsize));
 
@@ -531,6 +558,7 @@ streaming_init(void)
 {
   CHECK_NULL(L_STREAMING, streaming.silenceev = event_new(evbase_player, -1, 0, silenceev_cb, NULL));
   CHECK_ERR(L_STREAMING,  mutex_init(&streaming_wanted_lck));
+  CHECK_ERR(L_STREAMING, pthread_cond_init(&streaming_sequence_cond, NULL));
 
   return 0;
 }
@@ -539,6 +567,7 @@ static void
 streaming_deinit(void)
 {
   event_free(streaming.silenceev);
+// TODO should we destroy mutex and cond
 }
 
 struct output_definition output_streaming =
