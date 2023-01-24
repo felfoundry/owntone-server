@@ -778,7 +778,7 @@ playstatusupdate_cb(int fd, short what, void *arg)
 
   ret = make_playstatusupdate(update, update_current_rev);
   if (ret < 0)
-    return;
+    goto error;
 
   httpd_request_closecb_set(ur->hreq, NULL, NULL);
 
@@ -787,6 +787,9 @@ playstatusupdate_cb(int fd, short what, void *arg)
   pthread_mutex_lock(&update_request_lck);
   update_request_remove(&update_requests, ur);
   pthread_mutex_unlock(&update_request_lck);
+
+ error:
+  evbuffer_free(update);
 }
 
 static void
@@ -815,7 +818,7 @@ dacp_playstatus_update_handler(short event_mask)
 
   pthread_mutex_lock(&update_request_lck);
   update_current_rev++;
-  for (ur = update_requests; update_requests; ur = update_requests)
+  for (ur = update_requests; ur; ur = ur->next)
     {
       event_active(ur->updateev, 0, 0);
     }

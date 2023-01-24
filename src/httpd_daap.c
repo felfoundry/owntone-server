@@ -243,12 +243,14 @@ daap_session_add(bool is_remote, int request_session_id)
   return s;
 }
 
-
 /* ---------------------- UPDATE REQUESTS HANDLERS -------------------------- */
 
 static void
 update_free(struct daap_update_request *ur)
 {
+  if (!ur)
+    return;
+
   if (ur->timeout)
     event_free(ur->timeout);
 
