@@ -39,7 +39,9 @@
 #define DEBUG_ALLOC 1
 
 #ifdef DEBUG_ALLOC
-int debug_alloc_count;
+#include <pthread.h>
+static pthread_mutex_t debug_alloc_lck = PTHREAD_MUTEX_INITIALIZER;
+static int debug_alloc_count;
 #endif
 
 struct httpd_uri_parsed
@@ -152,8 +154,10 @@ void
 httpd_request_free(struct httpd_request *hreq)
 {
 #ifdef DEBUG_ALLOC
+  pthread_mutex_lock(&debug_alloc_lck);
   debug_alloc_count--;
-  DPRINTF(E_LOG, L_HTTPD, "DEALLOC hreq - count is %d\n", debug_alloc_count);
+  pthread_mutex_unlock(&debug_alloc_lck);
+  DPRINTF(E_DBG, L_HTTPD, "DEALLOC hreq - count is %d\n", debug_alloc_count);
 #endif
 
   if (!hreq)
@@ -176,8 +180,10 @@ httpd_request_new(httpd_backend *backend, const char *uri, const char *user_agen
   CHECK_NULL(L_HTTPD, hreq = calloc(1, sizeof(struct httpd_request)));
 
 #ifdef DEBUG_ALLOC
+  pthread_mutex_lock(&debug_alloc_lck);
   debug_alloc_count++;
-  DPRINTF(E_LOG, L_HTTPD, "ALLOC hreq - count is %d\n", debug_alloc_count);
+  pthread_mutex_unlock(&debug_alloc_lck);
+  DPRINTF(E_DBG, L_HTTPD, "ALLOC hreq - count is %d\n", debug_alloc_count);
 #endif
 
   // Populate hreq by getting values from the backend (or from the caller)
