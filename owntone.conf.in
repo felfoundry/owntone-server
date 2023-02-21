@@ -231,6 +231,12 @@ library {
 	# the playlist like MPD does. Note that some dacp clients do not show
 	# the playqueue if playback is stopped.
 #	clear_queue_on_stop_disable = false
+
+	# Here you can set ffmpeg filters (similar to 'ffmpeg -af xxx') that you
+	# want the server to use when decoding files from your library. Examples:
+	#  { 'volume=replaygain=track' } -> use REPLAYGAIN_TRACK_GAIN metadata
+	#  { 'loudnorm=I=-16:LRA=11:TP=-1.5' } -> normalize volume
+#	decode_audio_filters = { }
 }
 
 # Local audio output
